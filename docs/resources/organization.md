@@ -17,21 +17,21 @@ The provider validates and compiles the declaration during `plan`, as soon as it
 # Instruction text is published as ConfigMaps in the organisation namespace and
 # referenced by content digest, so editing a file shows up as a plan change.
 module "culture" {
-  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.1.1"
+  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.2.0"
   name        = "acme-culture"
   namespace   = "acme-org"
   source_path = "${path.module}/instructions/culture.md"
 }
 
 module "representative_role" {
-  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.1.1"
+  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.2.0"
   name        = "acme-role-representative"
   namespace   = "acme-org"
   source_path = "${path.module}/instructions/representative.md"
 }
 
 module "engineer_role" {
-  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.1.1"
+  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.2.0"
   name        = "acme-role-engineer"
   namespace   = "acme-org"
   source_path = "${path.module}/instructions/engineer.md"
@@ -55,10 +55,13 @@ resource "steadmesh_organization" "acme" {
 
     harness_profiles = {
       claude = {
-        adapter          = "claude-code"
-        image_digest     = "ghcr.io/darcys22/steadmesh/seat-claudecode:0.1.1"
-        model_connection = "model"
+        adapter      = "claude-code"
+        image_digest = "ghcr.io/darcys22/steadmesh/seat-claudecode:0.2.0"
+        model        = { connection = "anthropic", id = "claude-sonnet-5-5" }
       }
+      # Another seat could run Codex on OpenAI, or Pi on any compatible endpoint:
+      # codex = { adapter = "codex", image_digest = "…/seat-codex:0.1.1",
+      #           model = { connection = "openai", id = "gpt-5.5" } }
     }
     execution_profiles = {
       interactive = {
@@ -100,9 +103,9 @@ resource "steadmesh_organization" "acme" {
     # in the control-plane namespace, vault:<path> a Vault KV entry. Slack
     # needs bot_token and app_token; Anthropic and Linear need api_key.
     connections = {
-      slack  = { adapter = "slack", account_id = "T0123456", secret_ref = "k8s:slack-credentials" }
-      model  = { adapter = "anthropic", secret_ref = "k8s:anthropic-credentials" }
-      linear = { adapter = "linear", secret_ref = "k8s:linear-credentials", config = { team_id = "ENG" } }
+      slack     = { adapter = "slack", account_id = "T0123456", secret_ref = "k8s:slack-credentials" }
+      anthropic = { adapter = "anthropic", secret_ref = "k8s:anthropic-credentials" }
+      linear    = { adapter = "linear", secret_ref = "k8s:linear-credentials", config = { team_id = "ENG" } }
     }
 
     grants = {
@@ -179,6 +182,7 @@ A failed create leaves the resource tainted, so the next plan replaces it. After
 
 Optional:
 
+- `access_profiles` (Attributes Map) Sandbox access profiles: practical access from a seat's sandbox, one plugin per field. Seats and teams name them; a seat gets the union. Without any, a seat reaches only the platform. See docs/sandbox.html. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--access_profiles))
 - `channel_bindings` (Attributes Map) Bindings of verified human identities to representative seats. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--channel_bindings))
 - `connections` (Attributes Map) Connections to external services. Secrets are references only. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--connections))
 - `culture_refs` (List of String) Ordered organisation culture instruction references (configmap:<name>/<key>#sha256:<digest>).
@@ -192,6 +196,86 @@ Optional:
 - `shared_workspaces` (Attributes Map) Shared workspaces. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--shared_workspaces))
 - `team_templates` (Attributes Map) Reusable team templates. Resolved by the provider before the object is written. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--team_templates))
 - `teams` (Attributes Map) Concrete teams. Membership is declared on seats. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--teams))
+- `work_publication` (Attributes) Publish the work items of shared memory stores to a tracker so people can follow progress there. Optional: agents coordinate through memory and messages either way, and a failing tracker never blocks them. Personal stores are never published. (see [below for nested schema](#nestedatt--spec--work_publication))
+
+<a id="nestedatt--spec--access_profiles"></a>
+### Nested Schema for `spec.access_profiles`
+
+Optional:
+
+- `browser` (Attributes) A headless browser tool (needs a -browser seat image); its traffic goes through the egress gateway. (see [below for nested schema](#nestedatt--spec--access_profiles--browser))
+- `egress` (Attributes) Hosts the seat may reach through the egress gateway (enable_egress). Changes apply live; removed hosts close open connections within seconds. (see [below for nested schema](#nestedatt--spec--access_profiles--egress))
+- `github` (Attributes) Repository access through a github connection. (see [below for nested schema](#nestedatt--spec--access_profiles--github))
+- `network` (Attributes) Direct connections to IP ranges, enforced by NetworkPolicy. (see [below for nested schema](#nestedatt--spec--access_profiles--network))
+- `tools` (Attributes) Binaries the seat image must provide; the seat does not start without them. (see [below for nested schema](#nestedatt--spec--access_profiles--tools))
+
+<a id="nestedatt--spec--access_profiles--browser"></a>
+### Nested Schema for `spec.access_profiles.browser`
+
+Optional:
+
+- `session` (Attributes) A signed-in session to load. (see [below for nested schema](#nestedatt--spec--access_profiles--browser--session))
+
+<a id="nestedatt--spec--access_profiles--browser--session"></a>
+### Nested Schema for `spec.access_profiles.browser.session`
+
+Required:
+
+- `connection` (String) A browser_session connection.
+
+
+
+<a id="nestedatt--spec--access_profiles--egress"></a>
+### Nested Schema for `spec.access_profiles.egress`
+
+Required:
+
+- `hosts` (List of String) example.com, *.example.com (subdomains) or host:port. Without a port, 443 and 80.
+
+
+<a id="nestedatt--spec--access_profiles--github"></a>
+### Nested Schema for `spec.access_profiles.github`
+
+Required:
+
+- `connection` (String) A github connection.
+- `permissions` (Map of String) contents, pull_requests, issues or metadata => read or write.
+- `repos` (List of String) owner/name repositories.
+
+Optional:
+
+- `delivery` (String) platform (default): operations through the platform; the credential never enters the sandbox. sandbox: git and gh in the sandbox receive a credential (a scoped, hour-long token with a GitHub App).
+
+
+<a id="nestedatt--spec--access_profiles--network"></a>
+### Nested Schema for `spec.access_profiles.network`
+
+Required:
+
+- `rules` (Attributes List) Allowed ranges. (see [below for nested schema](#nestedatt--spec--access_profiles--network--rules))
+
+<a id="nestedatt--spec--access_profiles--network--rules"></a>
+### Nested Schema for `spec.access_profiles.network.rules`
+
+Required:
+
+- `cidr` (String) IP range, e.g. 10.0.5.0/24.
+
+Optional:
+
+- `ports` (List of Number) Ports; empty allows every port.
+- `protocol` (String) tcp (default), udp or sctp.
+
+
+
+<a id="nestedatt--spec--access_profiles--tools"></a>
+### Nested Schema for `spec.access_profiles.tools`
+
+Required:
+
+- `binaries` (List of String) Binary names, e.g. git, gh, curl.
+
+
 
 <a id="nestedatt--spec--channel_bindings"></a>
 ### Nested Schema for `spec.channel_bindings`
@@ -212,16 +296,40 @@ Optional:
 
 Required:
 
-- `adapter` (String) Connector adapter: slack, linear or anthropic.
+- `adapter` (String) Connector adapter: slack, linear, anthropic, openai or model (any compatible model endpoint).
 
 Optional:
 
 - `account_id` (String) Authorised account or workspace identity.
 - `config` (Map of String) Adapter configuration, e.g. team_id for linear.
-- `endpoint_ref` (String) Base URL override (fakes, self-hosted).
+- `endpoint_ref` (String) Base URL override (fakes, self-hosted). For model connections, the API base, usually ending in /v1.
+- `model` (Attributes) What a model connection serves. Defaults for anthropic and openai; the model adapter must declare its APIs. Claims are verified at readiness. (see [below for nested schema](#nestedatt--spec--connections--model))
 - `ownership` (String) external (default) or managed.
-- `required` (Boolean) Whether the connection must authenticate before the organisation is ready (default true).
+- `required` (Boolean) Whether the connection must authenticate before the organisation is ready. By default model connections a harness uses and communication connections with channel bindings are required; others, such as a work tracker, are optional: their failures are reported as IntegrationsDegraded but never block readiness or internal work.
 - `secret_ref` (String) vault:<path> or k8s:<secret-name>. Never a raw credential.
+
+<a id="nestedatt--spec--connections--model"></a>
+### Nested Schema for `spec.connections.model`
+
+Optional:
+
+- `apis` (List of String) APIs the endpoint serves: anthropic_messages, openai_responses, openai_chat.
+- `auth` (String) How the credential is sent: bearer (default), x-api-key or header:<Name>.
+- `models` (Attributes List) Models the endpoint serves. When set, harness profiles may only select these, and readiness checks each. (see [below for nested schema](#nestedatt--spec--connections--model--models))
+- `verify` (String) Readiness check: request (default; a minimal request per API and model), models (list models) or none.
+
+<a id="nestedatt--spec--connections--model--models"></a>
+### Nested Schema for `spec.connections.model.models`
+
+Required:
+
+- `id` (String) Model identifier.
+
+Optional:
+
+- `apis` (List of String) APIs this model is served on; empty means all of the connection's APIs.
+
+
 
 
 <a id="nestedatt--spec--execution_profiles"></a>
@@ -264,15 +372,28 @@ Optional:
 
 Required:
 
-- `adapter` (String) Harness adapter, e.g. claude-code or fake.
+- `adapter` (String) Harness adapter: claude-code, codex, pi or fake.
 - `image_digest` (String) Pinned harness image.
 
 Optional:
 
 - `config` (Map of String) Adapter configuration.
-- `model` (String) Model name.
-- `model_connection` (String) Connection with a model adapter.
+- `model` (Attributes) The model the harness uses and the connection that serves it. (see [below for nested schema](#nestedatt--spec--harness_profiles--model))
 - `required_capabilities` (List of String) Capabilities the adapter must support.
+
+<a id="nestedatt--spec--harness_profiles--model"></a>
+### Nested Schema for `spec.harness_profiles.model`
+
+Required:
+
+- `connection` (String) A model connection.
+- `id` (String) Model identifier sent to the endpoint. The platform rejects requests from the seat for any other model.
+
+Optional:
+
+- `api` (String) anthropic_messages, openai_responses or openai_chat. When unset, the first API the harness speaks that the connection and model also serve.
+- `settings` (Map of String) Harness-specific model settings: effort (claude-code); reasoning_effort (codex); thinking, context_window, max_tokens, reasoning (pi).
+
 
 
 <a id="nestedatt--spec--memory_stores"></a>
@@ -322,6 +443,7 @@ Required:
 
 Optional:
 
+- `access_profiles` (List of String) Access profiles granted to this seat, in addition to its teams'.
 - `adopt_from` (String) Explicitly adopt the retained data of a retired seat ID.
 - `display_name` (String) Display name.
 - `instruction_refs` (List of String) Additional seat-scoped instruction references.
@@ -370,10 +492,20 @@ Optional:
 
 Optional:
 
+- `access_profiles` (List of String) Access profiles granted to every member.
 - `instruction_refs` (List of String) Additional ordered team instruction references.
 - `parameters` (Map of String) Parameters overriding template parameters.
 - `shared_memory` (Map of List of String) Memory store key to operations granted to members.
 - `template` (String) Team template to instantiate.
+
+
+<a id="nestedatt--spec--work_publication"></a>
+### Nested Schema for `spec.work_publication`
+
+Required:
+
+- `connection` (String) Tracker connection key, e.g. a Linear connection.
+- `stores` (List of String) Shared memory stores whose work items are published.
 
 
 
