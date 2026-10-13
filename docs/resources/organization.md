@@ -17,21 +17,21 @@ The provider validates and compiles the declaration during `plan`, as soon as it
 # Instruction text is published as ConfigMaps in the organisation namespace and
 # referenced by content digest, so editing a file shows up as a plan change.
 module "culture" {
-  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.5.0"
+  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.6.0"
   name        = "acme-culture"
   namespace   = "acme-org"
   source_path = "${path.module}/instructions/culture.md"
 }
 
 module "representative_role" {
-  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.5.0"
+  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.6.0"
   name        = "acme-role-representative"
   namespace   = "acme-org"
   source_path = "${path.module}/instructions/representative.md"
 }
 
 module "engineer_role" {
-  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.5.0"
+  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.6.0"
   name        = "acme-role-engineer"
   namespace   = "acme-org"
   source_path = "${path.module}/instructions/engineer.md"
@@ -56,11 +56,11 @@ resource "steadmesh_organization" "acme" {
     harness_profiles = {
       claude = {
         adapter      = "claude-code"
-        image_digest = "ghcr.io/darcys22/steadmesh/seat-claudecode:0.5.0"
+        image_digest = "ghcr.io/darcys22/steadmesh/seat-claudecode:0.6.0"
         model        = { connection = "anthropic", id = "claude-sonnet-5-5" }
       }
       # Another seat could run Codex on OpenAI, or Pi on any compatible endpoint:
-      # codex = { adapter = "codex", image_digest = "…/seat-codex:0.1.1",
+      # codex = { adapter = "codex", image_digest = "…/seat-codex:0.6.0",
       #           model = { connection = "openai", id = "gpt-5.5" } }
     }
     execution_profiles = {
@@ -191,6 +191,7 @@ Optional:
 - `harness_profiles` (Attributes Map) Harness profiles. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--harness_profiles))
 - `memory_stores` (Attributes Map) Memory stores. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--memory_stores))
 - `message_routes` (Attributes Map) Permitted message routes. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--message_routes))
+- `model_budgets` (Attributes) Enforced cumulative output-token budgets. Input tokens and dollar costs are not capped. Daily windows reset at 00:00 UTC. Zero scope limits are unlimited; at least one must be positive. (see [below for nested schema](#nestedatt--spec--model_budgets))
 - `sandbox_profiles` (Attributes Map) Sandbox profiles. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--sandbox_profiles))
 - `seats` (Attributes Map) Seats: persistent agent identities. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--seats))
 - `shared_workspaces` (Attributes Map) Shared workspaces. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--shared_workspaces))
@@ -420,6 +421,17 @@ Optional:
 
 - `bidirectional` (Boolean) Permit both directions.
 - `reply` (Boolean) Recipient may reply within conversations opened on this route.
+
+
+<a id="nestedatt--spec--model_budgets"></a>
+### Nested Schema for `spec.model_budgets`
+
+Optional:
+
+- `execution_output_tokens` (Number) Output tokens across all requests in each execution.
+- `max_request_output_tokens` (Number) Maximum reserved output tokens per request, default 4096. Lowered to available budget headroom.
+- `organization_daily_output_tokens` (Number) Output tokens per UTC day across the organisation.
+- `seat_daily_output_tokens` (Number) Output tokens per UTC day for each seat.
 
 
 <a id="nestedatt--spec--sandbox_profiles"></a>
