@@ -17,21 +17,21 @@ The provider validates and compiles the declaration during `plan`, as soon as it
 # Instruction text is published as ConfigMaps in the organisation namespace and
 # referenced by content digest, so editing a file shows up as a plan change.
 module "culture" {
-  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.6.0"
+  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.7.0"
   name        = "acme-culture"
   namespace   = "acme-org"
   source_path = "${path.module}/instructions/culture.md"
 }
 
 module "representative_role" {
-  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.6.0"
+  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.7.0"
   name        = "acme-role-representative"
   namespace   = "acme-org"
   source_path = "${path.module}/instructions/representative.md"
 }
 
 module "engineer_role" {
-  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.6.0"
+  source      = "github.com/darcys22/steadmesh//modules/instruction-bundle?ref=v0.7.0"
   name        = "acme-role-engineer"
   namespace   = "acme-org"
   source_path = "${path.module}/instructions/engineer.md"
@@ -46,6 +46,26 @@ resource "steadmesh_organization" "acme" {
   spec = {
     culture_refs = [module.culture.ref]
 
+    # Optional bounded, read-only worker fan-out; all workers share their
+    # requester's model and execution budget and cannot spawn more workers.
+    model_budgets = {
+      organization_daily_output_tokens = 1000000
+      execution_output_tokens          = 100000
+    }
+    elastic_teams = {
+      enabled_seats              = ["engineer"]
+      max_active_workers         = 20
+      max_active_per_execution   = 10
+      max_launches_per_execution = 20
+      max_timeout_seconds        = 600
+      templates = {
+        researcher = {
+          instructions = "Research the assigned question and cite your evidence."
+          tool_names   = ["memory.read", "memory.search"]
+        }
+      }
+    }
+
     team_templates = {
       engineering = { roles = { engineer = module.engineer_role.ref } }
     }
@@ -56,7 +76,7 @@ resource "steadmesh_organization" "acme" {
     harness_profiles = {
       claude = {
         adapter      = "claude-code"
-        image_digest = "ghcr.io/darcys22/steadmesh/seat-claudecode:0.6.0"
+        image_digest = "ghcr.io/darcys22/steadmesh/seat-claudecode:0.7.0"
         model        = { connection = "anthropic", id = "claude-sonnet-5-5" }
       }
       # Another seat could run Codex on OpenAI, or Pi on any compatible endpoint:
@@ -149,6 +169,12 @@ With `wait_for_ready = true` (the default), create and update return only once t
 
 A failed create leaves the resource tainted, so the next plan replaces it. After fixing the reported condition, untaint it rather than recreating the organisation: `terraform untaint steadmesh_organization.<name>`.
 
+## Permission boundaries
+
+Each grant preserves its operations and target restrictions as an independent clause. The adapter validates typed operation parameters and derives the actual execution targets; every target must be allowed. Account-wide searches require an unrestricted grant for that operation. Unknown or ambiguous fields are rejected.
+
+GitHub platform-delivery grants never broaden sandbox tokens. A single sandbox connection requires uniform effective permissions across its repositories; split differing scopes into separate connections or use platform delivery. Sandbox credential delivery also requires the platform's durable credential ledger key. See [sandbox access](https://steadmesh.com/sandbox.html#github) and the [permission-hardening rollout](https://steadmesh.com/operations.html#permission-upgrade) before upgrading existing organisations.
+
 ## Data retention
 
 `data_retention` controls what happens when the resource is destroyed. With `retain` (the default), the agents are stopped and their access revoked, but workspace volumes and platform records (conversations, memory) are kept; a seat declared later with `adopt_from` can take over a retired seat's data. With `delete`, the volumes and records are deleted too. External resources such as Slack workspaces and Linear projects are never deleted.
@@ -186,6 +212,7 @@ Optional:
 - `channel_bindings` (Attributes Map) Bindings of verified human identities to representative seats. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--channel_bindings))
 - `connections` (Attributes Map) Connections to external services. Secrets are references only. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--connections))
 - `culture_refs` (List of String) Ordered organisation culture instruction references (configmap:<name>/<key>#sha256:<digest>).
+- `elastic_teams` (Attributes) Bounded temporary workers for selected seats. Requires positive organization and execution output-token budgets. Workers inherit requester model/runtime authorization and cannot launch nested workers. (see [below for nested schema](#nestedatt--spec--elastic_teams))
 - `execution_profiles` (Attributes Map) Execution profiles. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--execution_profiles))
 - `grants` (Attributes Map) Access grants. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--grants))
 - `harness_profiles` (Attributes Map) Harness profiles. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--harness_profiles))
@@ -196,7 +223,7 @@ Optional:
 - `seats` (Attributes Map) Seats: persistent agent identities. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--seats))
 - `shared_workspaces` (Attributes Map) Shared workspaces. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--shared_workspaces))
 - `team_templates` (Attributes Map) Reusable team templates. Resolved by the provider before the object is written. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--team_templates))
-- `teams` (Attributes Map) Concrete teams. Membership is declared on seats. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--teams))
+- `teams` (Attributes Map) Concrete teams. Durable membership is declared on seats; runtime pool membership is not Terraform state. Keyed by stable key. (see [below for nested schema](#nestedatt--spec--teams))
 - `timezone` (String) IANA time zone in which seats read and schedule times of day, e.g. Australia/Melbourne. A channel binding can set its human's own. Default UTC.
 - `work_publication` (Attributes) Publish the work items of shared memory stores to a tracker so people can follow progress there. Optional: agents coordinate through memory and messages either way, and a failing tracker never blocks them. Personal stores are never published. (see [below for nested schema](#nestedatt--spec--work_publication))
 
@@ -331,6 +358,68 @@ Required:
 Optional:
 
 - `apis` (List of String) APIs this model is served on; empty means all of the connection's APIs.
+
+
+
+
+<a id="nestedatt--spec--elastic_teams"></a>
+### Nested Schema for `spec.elastic_teams`
+
+Required:
+
+- `enabled_seats` (List of String) Existing seats permitted to launch elastic workers.
+- `max_active_per_execution` (Number) Active worker limit per execution, 1–32.
+- `max_active_workers` (Number) Organization-wide active worker limit, 1–1024.
+- `max_launches_per_execution` (Number) Lifetime launches per execution, including retries, 1–128.
+- `max_timeout_seconds` (Number) Maximum worker timeout, 1–1200 seconds.
+- `templates` (Attributes Map) Nonempty map of stable worker template keys. (see [below for nested schema](#nestedatt--spec--elastic_teams--templates))
+
+Optional:
+
+- `draining` (Boolean) Prevent all new disposable worker launches, including legacy tasks and branches, while existing workers finish. Defaults to false.
+
+<a id="nestedatt--spec--elastic_teams--templates"></a>
+### Nested Schema for `spec.elastic_teams.templates`
+
+Required:
+
+- `instructions` (String) Role instructions, nonempty UTF-8, at most 8192 bytes.
+
+Optional:
+
+- `execution_profile` (String) Optional assertion: must equal every enabled seat's execution profile. Omit to inherit each requester's pinned runtime resources.
+- `harness_profile` (String) Optional assertion: must equal every enabled seat's harness profile. Omit to inherit each requester's pinned model and harness.
+- `seat` (Attributes) Native pool seat configuration; forbidden for legacy elastic teams. (see [below for nested schema](#nestedatt--spec--elastic_teams--templates--seat))
+- `tool_names` (List of String) Read-only tools: memory.stores, memory.list, memory.read, memory.search, memory.history, work.get, work.list. Further restricted by requester grants. Omitted or empty means no delegated tools.
+
+<a id="nestedatt--spec--elastic_teams--templates--seat"></a>
+### Nested Schema for `spec.elastic_teams.templates.seat`
+
+Required:
+
+- `execution_profile` (String) Execution profile key.
+- `harness_profile` (String) Harness profile key.
+- `role_ref` (String) Role instruction reference, or role:<key> resolved from the seat's team templates.
+- `sandbox_profile` (String) Sandbox profile key.
+
+Optional:
+
+- `access_profiles` (List of String) Access profiles granted to this seat, in addition to its teams'.
+- `adopt_from` (String) Explicitly adopt the retained data of a retired seat ID.
+- `display_name` (String) Display name.
+- `instruction_refs` (List of String) Additional seat-scoped instruction references.
+- `personal_memory` (String) Personal memory store key.
+- `teams` (List of String) Ordered team memberships.
+- `workspace` (Attributes) Workspace binding. (see [below for nested schema](#nestedatt--spec--elastic_teams--templates--seat--workspace))
+
+<a id="nestedatt--spec--elastic_teams--templates--seat--workspace"></a>
+### Nested Schema for `spec.elastic_teams.templates.seat.workspace`
+
+Optional:
+
+- `persistent` (Boolean) Persistent per-seat workspace.
+- `shared` (List of String) Shared workspace keys to mount (requires a grant).
+
 
 
 
@@ -507,10 +596,99 @@ Optional:
 Optional:
 
 - `access_profiles` (List of String) Access profiles granted to every member.
+- `context` (Attributes) Independent self-context editing permissions. Team memberships union permissions; these never grant memory access. (see [below for nested schema](#nestedatt--spec--teams--context))
+- `coordination` (Attributes) Coordination policy, independent of pooling, tools and message authority. (see [below for nested schema](#nestedatt--spec--teams--coordination))
 - `instruction_refs` (List of String) Additional ordered team instruction references.
 - `parameters` (Map of String) Parameters overriding template parameters.
+- `pool` (Attributes) Native participant pool with independent seat identities. Runtime membership never changes declared seats. (see [below for nested schema](#nestedatt--spec--teams--pool))
 - `shared_memory` (Map of List of String) Memory store key to operations granted to members.
 - `template` (String) Team template to instantiate.
+
+<a id="nestedatt--spec--teams--context"></a>
+### Nested Schema for `spec.teams.context`
+
+Optional:
+
+- `editable_instructions` (Boolean) Allow members to edit only their own versioned instructions, subject to require_instruction_approval. Default false.
+- `editable_summary` (Boolean) Allow members to edit only their own versioned summary. Default false.
+- `instruction_approvers` (List of String) Explicit seat:<member-key> or team:<this-team> reviewers. Reviewers union across team memberships; approval grants no other authority.
+- `require_instruction_approval` (Boolean) Require reviewed proposals for instruction edits. Requires editable_instructions and explicit instruction_approvers. Any team approval requirement wins across memberships.
+
+
+<a id="nestedatt--spec--teams--coordination"></a>
+### Nested Schema for `spec.teams.coordination`
+
+Optional:
+
+- `max_messages_per_execution` (Number) Bounded coordination messages per execution, 1–1000; default 20.
+- `mission` (String) Initial mission, at most 8192 UTF-8 bytes.
+- `mission_editors` (List of String) Explicit seat:<member-key> or team:<this-team> selectors. Empty grants no agent mission-edit permission.
+- `mode` (String) declared (default) or self_organising. Neither grants routes or tools.
+- `review_policy` (String) none (default) or required. Required review needs a work_store.
+- `work_store` (String) Unique shared work board store. Requires explicit team read, write and revise grants.
+
+
+<a id="nestedatt--spec--teams--pool"></a>
+### Nested Schema for `spec.teams.pool`
+
+Required:
+
+- `max_members` (Number) Maximum active participants, 1–1024.
+- `templates` (Attributes Map) Explicit participant templates. Owning team membership is automatically included; all authority uses ordinary team/seat grants and access profiles. (see [below for nested schema](#nestedatt--spec--teams--pool--templates))
+
+Optional:
+
+- `drain_timeout_seconds` (Number) Graceful drain bound, 1–3600 seconds; default 300.
+- `draining` (Boolean) Stop admission while existing members drain. Default false.
+- `idle_timeout_seconds` (Number) Idle retirement bound, 1–86400 seconds; default 900.
+- `min_members` (Number) Minimum participants, 0–1024, default 0; cannot exceed max_members.
+- `retention_seconds` (Number) Retired private-data retention. Zero (default) retains indefinitely; 1–2592000 seconds explicitly opts into automatic cleanup after retirement.
+
+<a id="nestedatt--spec--teams--pool--templates"></a>
+### Nested Schema for `spec.teams.pool.templates`
+
+Required:
+
+- `instructions` (String) Task instructions, nonempty UTF-8, at most 8192 bytes.
+- `seat` (Attributes) Independent seat configuration. Fixed personal_memory and adopt_from are forbidden; private memory is runtime allocated. (see [below for nested schema](#nestedatt--spec--teams--pool--templates--seat))
+
+Optional:
+
+- `execution_profile` (String) Legacy only; use seat.execution_profile.
+- `harness_profile` (String) Legacy only; use seat.harness_profile.
+- `tool_names` (List of String) Legacy only; must be omitted in native pools.
+
+<a id="nestedatt--spec--teams--pool--templates--seat"></a>
+### Nested Schema for `spec.teams.pool.templates.seat`
+
+Required:
+
+- `execution_profile` (String) Execution profile key.
+- `harness_profile` (String) Harness profile key.
+- `role_ref` (String) Role instruction reference, or role:<key> resolved from the seat's team templates.
+- `sandbox_profile` (String) Sandbox profile key.
+
+Optional:
+
+- `access_profiles` (List of String) Access profiles granted to this seat, in addition to its teams'.
+- `adopt_from` (String) Explicitly adopt the retained data of a retired seat ID.
+- `display_name` (String) Display name.
+- `instruction_refs` (List of String) Additional seat-scoped instruction references.
+- `personal_memory` (String) Personal memory store key.
+- `teams` (List of String) Ordered team memberships.
+- `workspace` (Attributes) Workspace binding. (see [below for nested schema](#nestedatt--spec--teams--pool--templates--seat--workspace))
+
+<a id="nestedatt--spec--teams--pool--templates--seat--workspace"></a>
+### Nested Schema for `spec.teams.pool.templates.seat.workspace`
+
+Optional:
+
+- `persistent` (Boolean) Persistent per-seat workspace.
+- `shared` (List of String) Shared workspace keys to mount (requires a grant).
+
+
+
+
 
 
 <a id="nestedatt--spec--work_publication"></a>
